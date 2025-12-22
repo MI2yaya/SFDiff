@@ -12,7 +12,7 @@ import math
 import matplotlib.pyplot as plt
 
 
-from sfdiff.utils import extract
+from sfdiff.utils import extract, make_lagged
 
 class SFDiffBase(pl.LightningModule):
     def __init__(
@@ -23,6 +23,9 @@ class SFDiffBase(pl.LightningModule):
         prediction_length,
         lr: float = 1e-3,
         dropout_rate: float = 0.01,
+        use_lags=False,
+        lag=1,
+        num_lags=1,
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -55,6 +58,10 @@ class SFDiffBase(pl.LightningModule):
         self.losses_running_mean = torch.ones(timesteps, requires_grad=False)
         self.lr = lr
         self.best_crps = np.inf
+        
+        self.use_lags = use_lags
+        self.lag = lag
+        self.num_lags = num_lags
 
 
     def configure_optimizers(self):
@@ -128,16 +135,22 @@ class SFDiffBase(pl.LightningModule):
         model_mean = sqrt_recip_alphas_t * (
             x - betas_t * predicted_noise / sqrt_one_minus_alphas_cumprod_t
         )
-
+        
+        pad_len = self.lag * (self.num_lags - 1)
+        context_len_lagged = (
+            self.context_length - pad_len
+            if self.use_lags
+            else self.context_length
+        )
         
         if guidance:
             assert h_fn is not None and R_inv is not None and y is not None, "h_fn and R_inv must be provided for guidance"
             if cheap:
                 with torch.enable_grad():
-                    grad_logp_y = self.observation_grad_cheap(x, t, y, h_fn, R_inv,self.context_length,y_mask) 
+                    grad_logp_y = self.observation_grad_cheap(x, t, y, h_fn, R_inv,context_len_lagged,y_mask) 
             else:
                 with torch.enable_grad():
-                    grad_logp_y = self.observation_grad_expensive(x,t,y,h_fn,R_inv,self.context_length,y_mask)
+                    grad_logp_y = self.observation_grad_expensive(x,t,y,h_fn,R_inv,context_len_lagged,y_mask)
                     
             guide_strength = base_strength
             guided_mean = model_mean + guide_strength* betas_t * grad_logp_y
@@ -245,21 +258,28 @@ class SFDiffBase(pl.LightningModule):
         sqrt_bar_alpha = extract(self.sqrt_alphas_cumprod, t, x_t.shape)
         sqrt_one_minus_bar = extract(self.sqrt_one_minus_alphas_cumprod, t, x_t.shape)
 
-        x0 = (x_t - sqrt_one_minus_bar * eps) / sqrt_bar_alpha
-        y_pred = h_fn(x0)
+        x0 = (x_t - sqrt_one_minus_bar * eps) / sqrt_bar_alpha #requires full lagged space
+
+        if self.use_lags:
+            # In lagged representation, the LAST observation_dim dimensions represent the current timestep
+            x0_current = x0[...,-self.observation_dim:]
+        else:
+            x0_current = x0
+        y_pred = h_fn(x0_current)
         
         # only guide on known context
-        resid = (y[:, :context_len, :] - y_pred[:, :context_len, :])
+        resid = (y[:, :context_len, :] - y_pred[:, :context_len, :]) * y_mask[:, :context_len, :]
         r = R_inv(resid)
-
         # compute J_h^T r per-batch (cheap)
         Jt_r = []
         for i in range(x0.shape[0]):
-            scalar = (y_pred[i, :context_len, :].reshape(-1) * r[i].reshape(-1)).sum()
+            mask_i = y_mask[i, :context_len, :].reshape(-1)
+            scalar = (y_pred[i, :context_len, :].reshape(-1) * 
+                    r[i].reshape(-1) *
+                    mask_i).sum()
             gi = torch.autograd.grad(scalar, x0, retain_graph=True, create_graph=False)[0][i]
             Jt_r.append(gi)
         Jt_r = torch.stack(Jt_r, dim=0)
-
         return Jt_r
 
     def observation_grad_expensive(self, x_t, t, y, h_fn, R_inv, context_len,y_mask):
@@ -270,15 +290,24 @@ class SFDiffBase(pl.LightningModule):
         sqrt_one_minus_bar = extract(self.sqrt_one_minus_alphas_cumprod, t, x_t.shape)
 
         x0 = (x_t - sqrt_one_minus_bar * eps) / sqrt_bar_alpha
-        y_pred = h_fn(x0)
+        if self.use_lags:
+            # In lagged representation, the LAST observation_dim dimensions represent the current timestep
+            x0_current = x0[...,-self.observation_dim:]
+        else:
+            x0_current = x0
+        y_pred = h_fn(x0_current)
+
         
         # only guide on known context
-        resid = (y[:, :context_len, :] - y_pred[:, :context_len, :])
+        resid = (y[:, :context_len, :] - y_pred[:, :context_len, :]) * y_mask[:, :context_len, :]
         r = R_inv(resid)  # [B, context_len, ydim]
 
         w = []
         for i in range(x0.shape[0]):
-            scalar = (y_pred[i, :context_len, :].reshape(-1) * r[i].reshape(-1)).sum()
+            mask_i = y_mask[i, :context_len, :].reshape(-1)
+            scalar = (y_pred[i, :context_len, :].reshape(-1) *
+                    r[i].reshape(-1) *
+                    mask_i).sum()
             wi = torch.autograd.grad(scalar, x0, retain_graph=True, create_graph=True)[0][i]
             w.append(wi)
         w = torch.stack(w, dim=0)  # [B, state_dim]
@@ -360,6 +389,9 @@ class SFDiffBase(pl.LightningModule):
         )
         mask = ~torch.isnan(x_start)
         x_start = torch.nan_to_num(x_start, nan=0.0)
+        if self.use_lags:
+            x_start = make_lagged(x_start,self.lag, self.num_lags)
+            mask = make_lagged(mask.float(),self.lag,self.num_lags).bool()
 
         t = torch.randint(0, self.timesteps, (x_start.shape[0],), device=device).long()
 
@@ -368,7 +400,7 @@ class SFDiffBase(pl.LightningModule):
         x_t = self.q_sample(x_start, t, noise)  # forward diffusion
         predicted_noise = self.backbone(x_t, t) # unconditional model
 
-
+        #print(f"mask : {mask}\n x: {x_start}")
 
         loss = ((predicted_noise - noise)**2 * mask).sum() / mask.sum()
 

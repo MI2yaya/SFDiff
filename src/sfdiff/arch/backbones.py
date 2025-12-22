@@ -114,6 +114,18 @@ def Conv1dKaiming(in_channels, out_channels, kernel_size):
     nn.init.kaiming_normal_(layer.weight)
     return layer
 
+class CrossDimBlock(nn.Module):
+    def __init__(self, D, hidden):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.LayerNorm(D),
+            nn.Linear(D, hidden),
+            nn.GELU(),
+            nn.Linear(hidden, D),
+        )
+
+    def forward(self, x):
+        return x + self.net(x)
 
 class SequenceBackbone(nn.Module):
     def __init__(
@@ -126,6 +138,8 @@ class SequenceBackbone(nn.Module):
         dropout=0.0,
         init_skip=True,
         block_type="s4",
+        use_transformer=False,
+        use_mixer=False,
     ):
         super().__init__()
         self.block_type = block_type.lower()
@@ -152,26 +166,56 @@ class SequenceBackbone(nn.Module):
             )
             for _ in range(num_residual_blocks)
         ])
+        self.num_cross_dim_blocks = observation_dim
+        self.cross_dim_blocks = nn.ModuleList([
+            CrossDimBlock(observation_dim, hidden_dim)
+            for _ in range(self.num_cross_dim_blocks)
+        ])
+        
         self.step_embedding = SinusoidalPositionEmbeddings(time_emb_dim)
         self.init_skip = init_skip
+        self.use_transformer = use_transformer
+        self.use_mixer = use_mixer
+        self.observation_dim = observation_dim
+        self.hidden_dim = hidden_dim
+        if self.use_transformer:
+            raise ValueError("Outdated condition removed bc its slow as heck")
+        if self.use_mixer:
+            print("Using cross-dim block before SX")
+        else:
+            print("Using SX directly")
 
     def forward(self, input, t):
-        x = self.input_init(input)  # B, L ,C
+        B, L, D = input.shape  # B,L,D*L
+        assert D == self.observation_dim
         t = self.time_init(self.step_embedding(t))
-        x = x.transpose(-1, -2)
+
+        x = input
+        if self.use_mixer:
+            for block in self.cross_dim_blocks:
+                x = block(x)
+
+
+        x = self.input_init(x)
+        x = x + t.unsqueeze(1)
+        
+        x = x.transpose(1, 2)  
         skips = []
         for layer in self.residual_blocks:
             x, skip = layer(x, t)
             skips.append(skip)
-
+            
         skip = torch.stack(skips).sum(0)
-        skip = skip.transpose(-1, -2)
+        skip = skip.transpose(1, 2)  
         out = self.out_linear(skip)
         if self.init_skip:
             out = out + input
+
+
         return out
 
 class Conv1d(nn.Module):
+    
     """Conv1d wrapper that keeps [B, L, C] layout."""
     def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, transpose=False):
         super().__init__()

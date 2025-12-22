@@ -222,7 +222,6 @@ class xDIndependentSinusoidalWaves():
         eps = 1e-6
         var = (self.r ** 2) + eps
         R_inv = resid / var
-        # normalize per feature, not per time
         R_inv = R_inv / (R_inv.std(dim=(1, 2), keepdim=True) + 1e-5)
         return R_inv
     
@@ -290,6 +289,88 @@ class TwoDDependentSinusoidalWaves():
 
         return x.T, y.T
   
+class ChirpFunction():
+    def __init__(self,
+        length,
+        dt,
+        q,
+        r,
+        obs_dim = 1,
+        ):
+        self.length = length
+        self.dt = dt
+        self.q = q
+        self.r = r
+        self.obs_dim = obs_dim
+    def h_fn(self, x):
+        return x
+
+    def R_inv(self, resid):
+        eps = 1e-6
+        var = (self.r ** 2) + eps
+        R_inv = resid / var
+        R_inv = R_inv / (R_inv.std(dim=1, keepdim=True) + 1e-5)
+        return R_inv
+    
+    
+    def generate(self):
+        t = np.arange(0, self.length, self.dt)
+        f0 = np.random.uniform(0.1, 0.5)
+        k = np.random.uniform(0.01, 0.1) * self.dt
+        amp = np.random.uniform(0.5, 2.0)
+        shift = np.random.uniform(0, 2*np.pi)
+        phase = (f0 * t + 0.5 * k * (t**2))
+        x = amp * np.sin(phase+shift) + np.random.normal(0.0, self.q, size=t.shape)
+        y = x + np.random.normal(0.0, self.r, size=t.shape)
+        return x.reshape(-1, 1), y.reshape(-1, 1)
+  
+class MixedSinandLogistic():
+    def __init__(self,
+        length,
+        dt,
+        q,
+        r,
+        obs_dim = 1,
+        ):
+        self.length = length
+        self.dt = dt
+        self.q = q
+        self.r = r
+        self.obs_dim = obs_dim
+    def h_fn(self, x):
+        return x
+
+    def R_inv(self, resid):
+        eps = 1e-6
+        var = (self.r ** 2) + eps
+        R_inv = resid / var
+        R_inv = R_inv / (R_inv.std(dim=1, keepdim=True) + 1e-5)
+        return R_inv
+
+    def generate(self):
+        xs=[[],[]]
+        ys=[[],[]]
+        amplitude=np.random.uniform(0.5,2)
+        frequency=np.random.uniform(2,8) 
+        chaos = np.random.uniform(2.8, 4.0)
+        phase=np.random.uniform(0,2*np.pi)
+        time_points = np.arange(0, self.length, self.dt)
+        x1 = np.random.rand()
+        for t in time_points:
+            x0 = np.sin(frequency*t + phase)*amplitude + np.random.normal(0,self.q)
+            xs[0].append(x0)
+            y0 =  x0 + np.random.normal(0,self.r)
+            ys[0].append(y0)
+            
+            x1 = chaos*x1*(1-x1) + np.random.normal(0,self.q)
+            xs[1].append(x1)
+            y1 =  x1 + np.random.normal(0,self.r)
+            ys[1].append(y1)
+            
+        xs = np.array(xs).T 
+        ys = np.array(ys).T
+        return xs, ys
+        
 class MassSpringChain:
     def __init__(self, length, dt, q, r, obs_dim=3):
         self.N = obs_dim
@@ -299,9 +380,50 @@ class MassSpringChain:
         self.dt = dt
         self.q = q
         self.r = r
-        raise NotImplementedError
 
+    def h_fn(self, x):
+        return x
+
+    def R_inv(self, resid):
+        eps = 1e-6
+        var = (self.r ** 2) + eps
+        R_inv = resid / var
+        R_inv = R_inv / (R_inv.std(dim=(1,2), keepdim=True) + 1e-5)
+        return R_inv
     
+    def generate(self):
+        dim = self.state_dim
+        time_steps = np.arange(0, self.length, self.dt)
+        T = len(time_steps)
+        pos_idx = np.arange(0,dim,2)
+        
+        A = np.eye(dim)
+        for i in range(self.N):
+            if i > 0:
+                A[2*i, 2*i - 1] = -self.dt 
+            if i < self.N - 1:
+                A[2*i + 1, 2*i + 2] = self.dt  
+            
+            
+
+        H = np.zeros((self.N, dim))
+        for i in range(self.N):
+            H[i, 2*i] = 1
+        
+        X = np.zeros((T, self.N))
+        Y = np.zeros((T, self.N))
+        x = np.random.randn(dim)
+
+        process_noise = np.random.randn(T, dim) * (self.q)
+        obs_noise     = np.random.randn(T, self.N) * (self.r)
+
+        for t in range(T):
+            x = A @ x + process_noise[t]  # recurrent update
+            X[t] = x[pos_idx]             # positions
+            Y[t] = H @ x + obs_noise[t]   # observations
+
+        return X, Y
+
 class Lorenz():
     def __init__(self,
         length,

@@ -48,6 +48,11 @@ def create_model(config,context_length,prediction_length,h_fn,R_inv):
         h_fn=h_fn,
         R_inv=R_inv,
         modelType=config['diffusion_config'].split('_')[1],
+        use_transformer=config.get('use_transformer',False),
+        use_mixer=config.get('use_mixer',False),
+        use_lags=config.get('use_lags',False),
+        lag=config.get('lag',1),
+        num_lags=config.get('num_lags',1),
     )
     model.to(config["device"])
     return model

@@ -9,7 +9,7 @@ class Hurdat:
         self.dt= 1
         self.q = 1
         self.r = 1
-        self.obs_dim = 4
+        self.obs_dim = 3 #4 for pressure, beware NAN torture
         self.filePath = os.path.join('data','hurdat2-1851-2024-040425.txt')
         self.plot=plot
     
@@ -134,7 +134,10 @@ class Hurdat:
                     wind = float(wind_str) if wind_str not in ("-999", "") else np.nan
                     pressure = float(pressure_str) if pressure_str not in ("-999", "") else np.nan
 
-                    obs_list.append([lat, lon, wind, pressure])
+                    if self.obs_dim == 3:
+                        obs_list.append([lat, lon, wind])
+                    elif self.obs_dim == 4:
+                        obs_list.append([lat,lon,wind,pressure]) #NaN hell, be warned
                     obs_read += 1
 
                 except Exception as e:

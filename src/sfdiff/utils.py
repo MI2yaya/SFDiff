@@ -203,3 +203,15 @@ def make_diffusion_gif(output_path="reverse_diffusion.gif", frame_dir="diffusion
     imageio.mimsave(output_path, frames, fps=fps, loop=0)
     print(f"Saved GIF: {output_path}")
     shutil.rmtree(frame_dir)
+    
+    
+    
+def make_lagged(x,lag,m):
+    B, T, D = x.shape
+    T_eff = T - lag * (m - 1)
+
+    xs = []
+    for k in range(m):
+        xs.append(x[:, (m - 1 - k) * lag : (m - 1 - k) * lag + T_eff, :])
+
+    return torch.cat(xs, dim=-1)

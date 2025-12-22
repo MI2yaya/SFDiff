@@ -5,7 +5,7 @@ import copy
 import torch
 from sfdiff.arch.backbones import SequenceBackbone, UNetBackbone
 from sfdiff.model.diffusion._base import SFDiffBase
-from sfdiff.utils import make_diffusion_gif
+from sfdiff.utils import make_diffusion_gif,make_lagged
 
 
 class SFDiff(SFDiffBase):
@@ -22,7 +22,12 @@ class SFDiff(SFDiffBase):
         init_skip=True,
         lr=1e-3,
         dropout_rate=0.01,
-        modelType='s4'
+        modelType='s4',
+        use_transformer=False,
+        use_mixer=False,
+        use_lags=False,
+        lag=1,
+        num_lags=1,
     ):
         super().__init__(
             timesteps=timesteps,
@@ -31,10 +36,22 @@ class SFDiff(SFDiffBase):
             prediction_length=prediction_length,
             lr=lr,
             dropout_rate=dropout_rate,
+            use_lags=use_lags,
+            lag=lag,
+            num_lags=num_lags,
         )
-        self.lags_seq=[0] #just for callback past_length=self.context_length + max(self.model.lags_seq),
-        backbone_parameters["observation_dim"] = observation_dim
-        backbone_parameters['output_dim']=observation_dim
+        if use_lags:
+            lagged_dim = observation_dim * num_lags
+            print("Using lagged data with lags:", lag, "num_lags:", num_lags)
+        else:
+            lagged_dim = observation_dim
+            
+        self.use_lags = use_lags
+        self.lag = lag
+        self.num_lags = num_lags
+        
+        backbone_parameters["observation_dim"] = lagged_dim
+        backbone_parameters['output_dim'] = lagged_dim
         print(backbone_parameters)
 
         self.modelType=modelType
@@ -45,6 +62,8 @@ class SFDiff(SFDiffBase):
             self.backbone = SequenceBackbone(
                 **backbone_parameters,
                 init_skip=init_skip,
+                use_transformer=use_transformer,
+                use_mixer=use_mixer,
             )
             
         elif modelType=='unet':
@@ -79,33 +98,49 @@ class SFDiff(SFDiffBase):
         
     ):
         device = next(self.backbone.parameters()).device
-        context_len = self.context_length
-        full_len = context_len + self.prediction_length
-        seq_len = full_len
-        known_len = y.shape[1]
+        obs_dim = self.observation_dim
+        lagged_dim = obs_dim * self.num_lags if self.use_lags else obs_dim
 
-        # initial noise
-        samples = torch.randn((num_samples, seq_len, self.observation_dim), device=device)
+        pad_len = self.lag * (self.num_lags - 1) if self.use_lags else 0
+        total_len = pad_len + self.context_length + self.prediction_length
 
 
+        # Prepare y and masks
         if y is not None:
-            mask = torch.zeros((num_samples, seq_len, self.observation_dim), device=device)
-            mask[:, :known_len, :] = 1
-            known_full = torch.zeros((num_samples, seq_len, self.observation_dim), device=device)
-            known_full[:, :known_len, :] = y
+            nan_mask = ~torch.isnan(y)
+            y_clean = torch.nan_to_num(y, nan=0.0)
+            y_clean = y_clean.repeat(num_samples, 1, 1)
+            nan_mask = nan_mask.repeat(num_samples, 1, 1)
+            known_len = y_clean.shape[1]
+        else:
+            y_clean = None
+            nan_mask = None
+            known_len = 0
+
+
+        # Initialize noise in lagged space
+        samples = torch.randn((num_samples, total_len, lagged_dim), device=device)
+
+        # Known values
+        if y is not None:
+            mask = torch.zeros_like(samples)
+            known_full = torch.zeros_like(samples)
+            
+            mask[:, pad_len:pad_len+known_len, :obs_dim] = 1.0
+            known_full[:, pad_len:pad_len+known_len, :obs_dim] = y_clean
         else:
             mask = None
             known_full = None
 
-
+        # Reverse diffusion
         for i in reversed(range(self.timesteps)):
             t = torch.full((num_samples,), i, device=device, dtype=torch.long)
-
             x_prev_uncond = self.p_sample(
                 x=samples,
                 t=t,
                 t_index=i,
-                y=y,
+                y=y_clean,      # pass lagged y for guidance
+                y_mask=nan_mask,
                 h_fn=self.h_fn,
                 R_inv=self.R_inv,
                 base_strength=base_strength,
@@ -114,7 +149,6 @@ class SFDiff(SFDiffBase):
                 guidance=guidance
             )
 
-            #x_prev_uncond, snr = self.p_sample(x_t=samples,t=t,)
             if mask is not None and i > 0:
                 t_prev = torch.full((num_samples,), i - 1, dtype=torch.long, device=device)
                 known_prev = self.q_sample(known_full, t_prev)
@@ -122,11 +156,13 @@ class SFDiff(SFDiffBase):
             else:
                 samples = x_prev_uncond
 
-            
+        # Reconstruct full-length forecast (original_seq_len) with padding for initial missing timesteps due to lagging
+        samples_full = samples[:, pad_len:, :obs_dim]
+
         if plot:
             make_diffusion_gif()
-            
-        return samples
+
+        return samples_full
 
     def on_train_batch_end(self, outputs, batch, batch_idx):
         for rate, state_dict in zip(self.ema_rate, self.ema_state_dicts):

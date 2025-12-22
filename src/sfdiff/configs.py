@@ -38,7 +38,7 @@ diffusion_s5 = {
 }
 diffusion_s5_large = {
     "backbone_parameters": backbone_s5_large,
-    "timesteps": 200,
+    "timesteps": 500,
     "diffusion_scheduler": linear_beta_schedule,
 }
 diffusion_unet = {

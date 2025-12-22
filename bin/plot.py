@@ -50,6 +50,11 @@ class StateForecastPlotter:
             h_fn=h_fn,
             R_inv=R_inv,
             modelType=self.config['diffusion_config'].split('_')[1],
+            use_transformer=self.config.get('use_transformer',False),
+            use_mixer=self.config.get('use_mixer',False),
+            use_lags=self.config.get('use_lags',False),
+            lag=self.config.get('lag',1),
+            num_lags=self.config.get('num_lags',1),
         )
 
         # Load state_dict
@@ -74,7 +79,7 @@ class StateForecastPlotter:
         
         if dataset_type == 'custom':
             dataset, generator = get_custom_dataset(dataset_name,
-                samples=self.config['data_samples'],
+                samples=testing_samples,
                 context_length=self.config["context_length"],
                 prediction_length=self.config["prediction_length"],
                 dt=self.config['dt'],

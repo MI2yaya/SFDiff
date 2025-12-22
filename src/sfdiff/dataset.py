@@ -1,7 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 import numpy as np
-from dataGeneration import SinusoidalWaves,Lorenz,DualSinusoidalWaves,LogisticMap,RandomWalk,xDIndependentSinusoidalWaves,TwoDDependentSinusoidalWaves, MassSpringChain
+from dataGeneration import SinusoidalWaves,Lorenz,DualSinusoidalWaves,LogisticMap,RandomWalk,xDIndependentSinusoidalWaves,TwoDDependentSinusoidalWaves, MassSpringChain, ChirpFunction, MixedSinandLogistic
 from dataRetrieve import Hurdat
 import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
@@ -19,6 +19,8 @@ def get_custom_dataset(dataset_name, samples=10, context_length=80,prediction_le
         "xdsinindependent":xDIndependentSinusoidalWaves,
         "2dsindependent": TwoDDependentSinusoidalWaves,
         "massspringchain":MassSpringChain,
+        "chirp":ChirpFunction,
+        "mixedsinandlogistic":MixedSinandLogistic,
 
     }
     generator = generatingClasses[dataset_name](context_length+prediction_length,dt,q,r,observation_dim)
@@ -33,6 +35,7 @@ def get_custom_dataset(dataset_name, samples=10, context_length=80,prediction_le
     state_array = np.array(states)
     observation_array = np.array(observations)
 
+    print(state_array.shape,observation_array.shape)
 
 
     if plot:
