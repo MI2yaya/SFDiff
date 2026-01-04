@@ -1,0 +1,41 @@
+batch_size: 128
+checkpoint_path: SavedModels\hurricane_new\hurricane_windspeed_futurefeatureaware\best_checkpoint.ckpt
+config: configs\hurricane.yaml
+context_length: 10
+cross_blocks: 12
+data_samples: 4978
+dataset: dataset:hurricaneAtlantic
+device: cuda:0
+diffusion_config: diffusion_s5_large
+dt: 1
+eval_every: 50
+freq: 6H
+gradient_clip_val: 0.5
+init_skip: true
+lag: 5
+lr: 0.001
+max_epochs: 500
+model: unconditional
+normalize: true
+num_batches_per_epoch: 100
+num_features: 4
+num_lags: 10
+num_samples: 16
+observation_dim: 1
+observation_mean:
+- 53.091373443603516
+observation_std:
+- 25.201557159423828
+out_dir: ./
+prediction_length: 5
+q: 1
+r: 1
+sampler: ddpm
+sampler_params:
+  guidance: quantile
+  scale: 2
+setup: forecasting
+use_features: true
+use_lags: false
+use_mixer: true
+use_transformer: false

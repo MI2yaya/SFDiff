@@ -2,11 +2,12 @@
 # SPDX-License-Identifier: Apache-2.0
 import numpy as np
 from dataGeneration import SinusoidalWaves,Lorenz,DualSinusoidalWaves,LogisticMap,RandomWalk,xDIndependentSinusoidalWaves,TwoDDependentSinusoidalWaves, MassSpringChain, ChirpFunction, MixedSinandLogistic
-from dataRetrieve import Hurdat
+from dataRetrieve import HurdatAT,HurdatPA,HurdatALL
 import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
 import random
 import os
+import math
 
 def get_custom_dataset(dataset_name, samples=10, context_length=80,prediction_length=20, dt=1,q=1,r=1,observation_dim=1,plot=False):
     generatingClasses = {
@@ -134,25 +135,62 @@ def get_custom_dataset(dataset_name, samples=10, context_length=80,prediction_le
 
     return custom_data, generator
 
+def encode_latlon(lat, lon):
+    # degrees → radians
+    lat = lat * math.pi / 180.0
+    lon = lon * math.pi / 180.0
+
+    return np.stack(
+        [
+            np.sin(lat),
+            np.cos(lat),
+            np.sin(lon),
+            np.cos(lon),
+        ],
+        axis=-1,  # [..., 4]
+    )
 
 
 def get_stored_dataset(dataset_name, config=None,length=5,plot=False):
     retrievers = {
-        "hurricane": Hurdat,
+        "hurricane": HurdatAT, #legacy name for atlantic
+        "hurricaneatlantic": HurdatAT,
+        "hurricanepacific": HurdatPA,
+        "hurricaneall": HurdatALL,
     }
 
-    retriever = retrievers[dataset_name](length=length,plot=plot)
+    retriever = retrievers[dataset_name](length=length,plot=plot,observation_dim=config['observation_dim'] if config is not None and 'observation_dim' in config else 3)
     
     observations = retriever.generate()
 
-    custom_data = [
-        {
-            "state":np.array(obs),#only needed for batching ig,
-            "observation":np.array(obs),
-        }
-        for obs in observations
-    ]
-    custom_data = np.array(custom_data)
+    if config['observation_dim'] == 1: #config['use_features']:
+        custom_data = []
+        for obs in observations:
+            obs = np.array(obs)  # [L, 3]
+
+            lat = obs[:, 0]
+            lon = obs[:, 1]
+            
+            features = encode_latlon(lat, lon)  # shape [L, 4]
+            state = obs[:, 2:]      # windspeed, shape [L,1]
+
+            custom_data.append({
+                "features": features.astype(np.float32),
+                "state": state.astype(np.float32),
+                "observation": state.astype(np.float32),  # same as state for now
+            })
+
+        custom_data = np.array(custom_data)
+
+    else:
+        custom_data = [
+            {
+                "state":np.array(obs),#only needed for batching ig,
+                "observation":np.array(obs),
+            }
+            for obs in observations
+        ]
+        custom_data = np.array(custom_data)
     
     config['dt'] = retriever.dt
     config['r']=retriever.r

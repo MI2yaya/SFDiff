@@ -28,6 +28,12 @@ class SFDiff(SFDiffBase):
         use_lags=False,
         lag=1,
         num_lags=1,
+        cross_blocks=-1,
+        use_features=False,
+        num_features=-1,
+        normalize=False,
+        observation_mean=0.0,
+        observation_std=1.0,
     ):
         super().__init__(
             timesteps=timesteps,
@@ -39,6 +45,11 @@ class SFDiff(SFDiffBase):
             use_lags=use_lags,
             lag=lag,
             num_lags=num_lags,
+            use_features=use_features,
+            num_features=num_features,
+            normalize=normalize,
+            observation_mean=torch.tensor(observation_mean,dtype=torch.float32),
+            observation_std=torch.tensor(observation_std,dtype=torch.float32),
         )
         if use_lags:
             lagged_dim = observation_dim * num_lags
@@ -49,6 +60,9 @@ class SFDiff(SFDiffBase):
         self.use_lags = use_lags
         self.lag = lag
         self.num_lags = num_lags
+        
+        self.use_features=use_features
+        self.num_features=num_features
         
         backbone_parameters["observation_dim"] = lagged_dim
         backbone_parameters['output_dim'] = lagged_dim
@@ -64,6 +78,9 @@ class SFDiff(SFDiffBase):
                 init_skip=init_skip,
                 use_transformer=use_transformer,
                 use_mixer=use_mixer,
+                cross_blocks=cross_blocks if cross_blocks > 0 else observation_dim,
+                use_features=use_features,
+                num_features=num_features
             )
             
         elif modelType=='unet':
@@ -84,8 +101,6 @@ class SFDiff(SFDiffBase):
         self.R_inv = R_inv
 
 
-
-
     @torch.no_grad()
     def sample_n(
         self,
@@ -95,6 +110,7 @@ class SFDiff(SFDiffBase):
         base_strength=0.1,
         plot=False,
         guidance=True,
+        features=None,
         
     ):
         device = next(self.backbone.parameters()).device
@@ -104,9 +120,16 @@ class SFDiff(SFDiffBase):
         pad_len = self.lag * (self.num_lags - 1) if self.use_lags else 0
         total_len = pad_len + self.context_length + self.prediction_length
 
+    
 
         # Prepare y and masks
         if y is not None:
+            if self.normalize:
+                print("Normalizing with,",self.observation_mean,self.observation_std)
+                y = (y - self.observation_mean.view(1, 1, -1)) / self.observation_std.view(1, 1, -1)
+            else:
+                y = y
+
             nan_mask = ~torch.isnan(y)
             y_clean = torch.nan_to_num(y, nan=0.0)
             y_clean = y_clean.repeat(num_samples, 1, 1)
@@ -117,6 +140,11 @@ class SFDiff(SFDiffBase):
             nan_mask = None
             known_len = 0
 
+        if features is not None:
+            features = features.to(device)
+            missing = torch.isnan(features)
+            features = torch.nan_to_num(features, nan=0.0)
+            features = features + missing * self.missing_feat
 
         # Initialize noise in lagged space
         samples = torch.randn((num_samples, total_len, lagged_dim), device=device)
@@ -125,7 +153,6 @@ class SFDiff(SFDiffBase):
         if y is not None:
             mask = torch.zeros_like(samples)
             known_full = torch.zeros_like(samples)
-            
             mask[:, pad_len:pad_len+known_len, :obs_dim] = 1.0
             known_full[:, pad_len:pad_len+known_len, :obs_dim] = y_clean
         else:
@@ -146,7 +173,8 @@ class SFDiff(SFDiffBase):
                 base_strength=base_strength,
                 cheap=cheap,
                 plot=plot,
-                guidance=guidance
+                guidance=guidance,
+                features=features
             )
 
             if mask is not None and i > 0:
@@ -159,6 +187,9 @@ class SFDiff(SFDiffBase):
         # Reconstruct full-length forecast (original_seq_len) with padding for initial missing timesteps due to lagging
         samples_full = samples[:, pad_len:, :obs_dim]
 
+        if self.normalize:
+            samples_full = samples_full * self.observation_std.view(1, 1, -1) + self.observation_mean.view(1, 1, -1)
+        
         if plot:
             make_diffusion_gif()
 

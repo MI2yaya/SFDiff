@@ -5,6 +5,7 @@ import math
 import torch
 from torch import nn
 
+
 from .s4 import S4
 from .s5 import S5
 
@@ -80,7 +81,7 @@ class SequenceLayer(nn.Module):
 
 
 class SequenceBlock(nn.Module):
-    def __init__(self, d_model, dropout=0.0, expand=2,block_type='s4'):
+    def __init__(self, d_model, dropout=0.0, expand=2,block_type='s4',num_features=0):
         super().__init__()
         # S4Layer already handles dropout internally
         self.core = SequenceLayer(d_model, dropout, block_type)
@@ -94,11 +95,17 @@ class SequenceBlock(nn.Module):
             in_channels=d_model, out_channels=d_model, kernel_size=1
         )
         self.additional_dropout = nn.Dropout1d(dropout) if dropout > 0.0 else nn.Identity()
+        if num_features > 0:
+            self.feature_encoder = nn.Conv1d(num_features, d_model, kernel_size=1)
+        else:
+            self.feature_encoder = None
 
-    def forward(self, x, t):
+    def forward(self, x, t, features=None):
         t = self.time_linear(t)[:, None, :].repeat(1, x.shape[2], 1)
         t = t.transpose(-1, -2)
         out, _ = self.core(x + t)  # S4Layer handles dropout internally
+        if features is not None and self.feature_encoder is not None:
+            out = out + self.feature_encoder(features)
         out = self.tanh(out) * self.sigm(out)
         
         # Apply additional dropout after activation but before final layers
@@ -140,6 +147,9 @@ class SequenceBackbone(nn.Module):
         block_type="s4",
         use_transformer=False,
         use_mixer=False,
+        cross_blocks=-1,
+        use_features=False,
+        num_features=-1,
     ):
         super().__init__()
         self.block_type = block_type.lower()
@@ -163,14 +173,29 @@ class SequenceBackbone(nn.Module):
                 hidden_dim,
                 dropout=dropout,
                 block_type=block_type,
+                num_features=num_features if use_features else 0,
             )
             for _ in range(num_residual_blocks)
         ])
-        self.num_cross_dim_blocks = observation_dim
+        self.num_cross_dim_blocks = cross_blocks if cross_blocks > 0 else observation_dim
         self.cross_dim_blocks = nn.ModuleList([
             CrossDimBlock(observation_dim, hidden_dim)
             for _ in range(self.num_cross_dim_blocks)
         ])
+        self.encoder_layer = nn.TransformerEncoderLayer(
+            d_model=hidden_dim,
+            nhead=4,                 # safe default; tune later
+            dim_feedforward=4 * hidden_dim,
+            dropout=dropout,
+            activation="gelu",
+            batch_first=True,
+            norm_first=True,         # IMPORTANT for diffusion stability
+        )
+        self.transformer = nn.TransformerEncoder(
+            self.encoder_layer,
+            num_layers=2             # start small
+        )
+
         
         self.step_embedding = SinusoidalPositionEmbeddings(time_emb_dim)
         self.init_skip = init_skip
@@ -178,14 +203,20 @@ class SequenceBackbone(nn.Module):
         self.use_mixer = use_mixer
         self.observation_dim = observation_dim
         self.hidden_dim = hidden_dim
+        self.use_features = use_features
         if self.use_transformer:
-            raise ValueError("Outdated condition removed bc its slow as heck")
-        if self.use_mixer:
-            print("Using cross-dim block before SX")
+            print(f"Using transformer block before SX")
+        elif self.use_mixer:
+            print(f"Using {self.num_cross_dim_blocks} cross-dim blocks before SX")
         else:
             print("Using SX directly")
+            
+        if self.use_features > 0:
+            print(f"Using additional features with dim {num_features}")
+        else:
+            print("Not using additional features")
 
-    def forward(self, input, t):
+    def forward(self, input, t, features=None):
         B, L, D = input.shape  # B,L,D*L
         assert D == self.observation_dim
         t = self.time_init(self.step_embedding(t))
@@ -193,16 +224,23 @@ class SequenceBackbone(nn.Module):
         x = input
         if self.use_mixer:
             for block in self.cross_dim_blocks:
-                x = block(x)
+                x = block(x) #does not use time embedding
 
 
         x = self.input_init(x)
+        
+        if self.use_features and features is not None:
+            features = features.transpose(1, 2) #tranpose for conv1d
+        
         x = x + t.unsqueeze(1)
+        
+        if self.use_transformer:
+            x = self.transformer(x) 
         
         x = x.transpose(1, 2)  
         skips = []
         for layer in self.residual_blocks:
-            x, skip = layer(x, t)
+            x, skip = layer(x, t,features if self.use_features else None)
             skips.append(skip)
             
         skip = torch.stack(skips).sum(0)

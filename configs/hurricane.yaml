@@ -1,16 +1,21 @@
 model: unconditional
-diffusion_config: diffusion_s5 #s5, s4, or unet
-dataset: dataset:hurricane
+diffusion_config: diffusion_s5_large #s5, s4, or unet
+dataset: dataset:hurricaneAtlantic #hurricaneAtlantic, hurricanePacific, hurricaneAll
+normalize: True
 freq: 6H
 context_length: 10
 prediction_length: 5
+observation_dim: 1
 lr: 1.e-3
 init_skip: True
 use_mixer: False
+cross_blocks: 12
 use_transformer: False
 use_lags: False
 lag: 5
 num_lags: 10
+use_features: False
+num_features: 4
 gradient_clip_val: 0.5
 max_epochs: 250
 num_batches_per_epoch: 100

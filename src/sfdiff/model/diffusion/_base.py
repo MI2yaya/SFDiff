@@ -5,6 +5,7 @@ import os
 import pandas as pd
 import torch
 import torch.nn.functional as F
+import torch.nn as nn
 import pytorch_lightning as pl
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from typing import Optional
@@ -26,6 +27,11 @@ class SFDiffBase(pl.LightningModule):
         use_lags=False,
         lag=1,
         num_lags=1,
+        use_features=False,
+        num_features=-1,
+        normalize=False,
+        observation_mean=0.0,
+        observation_std=1.0,
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -62,10 +68,19 @@ class SFDiffBase(pl.LightningModule):
         self.use_lags = use_lags
         self.lag = lag
         self.num_lags = num_lags
+        
+        self.use_features=use_features
+        self.num_features=num_features
+        self.missing_feat = nn.Parameter(torch.zeros(self.num_features))
+        
+        self.normalize=normalize
+        self.register_buffer("observation_mean", torch.tensor(observation_mean))
+        self.register_buffer("observation_std", torch.tensor(observation_std))
+
 
 
     def configure_optimizers(self):
-        optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
+        optimizer = torch.optim.AdamW(self.parameters(), lr=self.lr, weight_decay=1e-4)
         scheduler = ReduceLROnPlateau(
             optimizer, mode="min", factor=0.5, patience=int(1e12)
         )
@@ -125,13 +140,13 @@ class SFDiffBase(pl.LightningModule):
     '''
     @torch.no_grad()
     def p_sample(self, x, t, t_index, y=None, h_fn=None, R_inv=None, base_strength=1.0, cheap=True, plot=False,
-                 guidance=True, y_mask=None):
+                 guidance=True, y_mask=None,features=None):
         #given learnt score, predict unconditional model mean and then guide it using score of p(y_t|x_t) from tweedie approximation 
         betas_t = extract(self.betas, t, x.shape)
         sqrt_recip_alphas_t = extract(self.sqrt_recip_alphas, t, x.shape)
         sqrt_one_minus_alphas_cumprod_t = extract(self.sqrt_one_minus_alphas_cumprod, t, x.shape)
 
-        predicted_noise = self.backbone(x, t)
+        predicted_noise = self.backbone(x, t, features=features)
         model_mean = sqrt_recip_alphas_t * (
             x - betas_t * predicted_noise / sqrt_one_minus_alphas_cumprod_t
         )
@@ -147,10 +162,10 @@ class SFDiffBase(pl.LightningModule):
             assert h_fn is not None and R_inv is not None and y is not None, "h_fn and R_inv must be provided for guidance"
             if cheap:
                 with torch.enable_grad():
-                    grad_logp_y = self.observation_grad_cheap(x, t, y, h_fn, R_inv,context_len_lagged,y_mask) 
+                    grad_logp_y = self.observation_grad_cheap(predicted_noise, x, t, y, h_fn, R_inv,context_len_lagged,y_mask) 
             else:
                 with torch.enable_grad():
-                    grad_logp_y = self.observation_grad_expensive(x,t,y,h_fn,R_inv,context_len_lagged,y_mask)
+                    grad_logp_y = self.observation_grad_expensive(predicted_noise, x,t,y,h_fn,R_inv,context_len_lagged,y_mask)
                     
             guide_strength = base_strength
             guided_mean = model_mean + guide_strength* betas_t * grad_logp_y
@@ -251,10 +266,9 @@ class SFDiffBase(pl.LightningModule):
         return sample
 
         
-    def observation_grad_cheap(self, x_t, t, y, h_fn, R_inv,context_len,y_mask):
+    def observation_grad_cheap(self, eps, x_t, t, y, h_fn, R_inv,context_len,y_mask):
         # no autograd through backbone required (only need grad through h)
         x_t = x_t.requires_grad_(True)
-        eps = self.backbone(x_t, t)
         sqrt_bar_alpha = extract(self.sqrt_alphas_cumprod, t, x_t.shape)
         sqrt_one_minus_bar = extract(self.sqrt_one_minus_alphas_cumprod, t, x_t.shape)
 
@@ -282,10 +296,8 @@ class SFDiffBase(pl.LightningModule):
         Jt_r = torch.stack(Jt_r, dim=0)
         return Jt_r
 
-    def observation_grad_expensive(self, x_t, t, y, h_fn, R_inv, context_len,y_mask):
+    def observation_grad_expensive(self, eps, x_t, t, y, h_fn, R_inv, context_len,y_mask):
         x_t = x_t.requires_grad_(True)
-        eps = self.backbone(x_t, t)
-        
         sqrt_bar_alpha = extract(self.sqrt_alphas_cumprod, t, x_t.shape)
         sqrt_one_minus_bar = extract(self.sqrt_one_minus_alphas_cumprod, t, x_t.shape)
 
@@ -389,20 +401,44 @@ class SFDiffBase(pl.LightningModule):
         )
         mask = ~torch.isnan(x_start)
         x_start = torch.nan_to_num(x_start, nan=0.0)
+        
+        if self.normalize:
+            x_start = (x_start - self.observation_mean.view(1, 1, -1)) / self.observation_std.view(1, 1, -1)
+        else:
+            x_start = x_start
+        
+        if self.use_features:
+            features = torch.as_tensor(
+                torch.cat([data["past_features"], data["future_features"]], dim=1),
+                dtype=torch.float32,
+                device=device
+            )
+            missing = torch.isnan(features)
+
+            features = torch.nan_to_num(features, nan=0.0)
+            features = features + missing * self.missing_feat #learnt
+        else:
+            features = None
+        
+        
         if self.use_lags:
             x_start = make_lagged(x_start,self.lag, self.num_lags)
             mask = make_lagged(mask.float(),self.lag,self.num_lags).bool()
+            if self.use_features:
+                features = make_lagged(features,self.lag,self.num_lags)
 
         t = torch.randint(0, self.timesteps, (x_start.shape[0],), device=device).long()
 
         # add noise and compute denoising loss
         noise = torch.randn_like(x_start)
         x_t = self.q_sample(x_start, t, noise)  # forward diffusion
-        predicted_noise = self.backbone(x_t, t) # unconditional model
+        
+        predicted_noise = self.backbone(x_t, t,features=features) # conditioned only on features
 
         #print(f"mask : {mask}\n x: {x_start}")
 
-        loss = ((predicted_noise - noise)**2 * mask).sum() / mask.sum()
+        #loss = ((predicted_noise - noise)**2 * mask).sum() / mask.sum()
+        loss = F.mse_loss(noise,predicted_noise,reduction="mean")
 
         self.log("elbo_loss", loss, prog_bar=True, on_step=True, on_epoch=True)
         return {"loss": loss, "elbo_loss": loss}

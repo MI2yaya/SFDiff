@@ -53,6 +53,12 @@ def create_model(config,context_length,prediction_length,h_fn,R_inv):
         use_lags=config.get('use_lags',False),
         lag=config.get('lag',1),
         num_lags=config.get('num_lags',1),
+        cross_blocks=config.get('cross_blocks',-1),
+        use_features=config.get('use_features',False),
+        num_features=config.get('num_features',-1),
+        normalize =config.get('normalize',False),
+        observation_mean=config.get('observation_mean',0.0),
+        observation_std=config.get('observation_std',1.0),
     )
     model.to(config["device"])
     return model
@@ -86,10 +92,27 @@ def main(config, log_dir):
     prediction_length = config["prediction_length"] * scaling
     
     model = create_model(config,context_length,prediction_length,generator.h_fn,generator.R_inv)
+    if config.get('normalize',False):
+        all_data = np.concatenate([arr['observation'] for arr in dataset], axis=0)
+        obs_mean = np.nanmean(all_data, axis=0).astype(np.float32)
+        obs_std  = np.nanstd(all_data, axis=0).astype(np.float32)
+        obs_std[obs_std == 0] = 1.0
+
+        config["observation_mean"] = obs_mean.tolist()
+        config["observation_std"]  = obs_std.tolist()
+        
+
+        model.observation_mean = torch.as_tensor(obs_mean)
+        model.observation_std = torch.as_tensor(obs_std)
+        print(f"Data normalization enabled. Mean: {obs_mean}, Std: {obs_std}")
+        
+
+
 
     # Split dataset
     time_data = time_splitter(dataset, context_length, prediction_length)
     split_data = train_test_val_splitter(time_data, config['data_samples'], 1, 0, 0.0)
+
     
     # Prepare training data
     train_dataset = StateObsDataset(split_data["train"])

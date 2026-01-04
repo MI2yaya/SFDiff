@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 import argparse
 import sfdiff.configs as diffusion_configs
+import torch.nn as nn
 
 from sfdiff.model.diffusion.diff import SFDiff
 from sfdiff.dataset import get_custom_dataset, get_stored_dataset
@@ -31,6 +32,7 @@ class StateForecastPlotter:
         self.config = config
         self.device = config['device']
         self.checkpoint_path = checkpoint_path
+        self.missing_feat = nn.Parameter(torch.zeros(config.get('num_features',1)))
     
     def _load_model(self, checkpoint_path: str,h_fn,R_inv):
         logger.info(f"Loading model checkpoint: {Path(checkpoint_path).name}")
@@ -55,6 +57,12 @@ class StateForecastPlotter:
             use_lags=self.config.get('use_lags',False),
             lag=self.config.get('lag',1),
             num_lags=self.config.get('num_lags',1),
+            cross_blocks=self.config.get('cross_blocks',-1),
+            use_features=self.config.get('use_features',False),
+            num_features=self.config.get('num_features',-1),
+            normalize =self.config.get('normalize',False),
+            observation_mean=self.config.get('observation_mean',0.0),
+            observation_std=self.config.get('observation_std',1.0),
         )
 
         # Load state_dict
@@ -106,16 +114,30 @@ class StateForecastPlotter:
 
             past_observation = torch.as_tensor(series["past_observation"], dtype=torch.float32)
 
+            
+            if self.config.get('use_features',False):
+                past_feat = torch.as_tensor(series["past_features"], dtype=torch.float32)
+                future_feat = torch.as_tensor(series["future_features"], dtype=torch.float32)
+                features = torch.cat([past_feat, future_feat], dim=0)
+            else:
+                features = None
+
+
             if past_observation.ndim == 2:  # shape (batch, seq_len, dims)
                 past_observation = past_observation.unsqueeze(0) 
 
+            if features is not None and features.ndim == 2:
+                features = features.unsqueeze(0) 
 
             y = past_observation.to(device=self.model.device, dtype=torch.float32)
+            features = features.to(device=self.model.device, dtype=torch.float32) if features is not None else None
+
             # Generate samples from model
             generated= self.model.sample_n(
                 y=y,
                 num_samples=num_samples,
-                cheap=True,
+                features=features,
+                cheap=False,
                 base_strength=.5,
                 plot=False,
                 guidance=True,
@@ -236,7 +258,7 @@ def main(config_path):
     with open(config_path, "r") as fp:
         config = yaml.safe_load(fp)
 
-    create_continual_learning_plots(config, start_series=0, num_series=3)
+    create_continual_learning_plots(config, start_series=0, num_series=10)
 
 if __name__ == "__main__":
     

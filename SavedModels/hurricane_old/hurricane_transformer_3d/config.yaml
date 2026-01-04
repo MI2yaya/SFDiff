@@ -1,0 +1,33 @@
+batch_size: 128
+checkpoint_path: lightning_logs\hurricane_transformer\best_checkpoint.ckpt
+config: configs\hurricane.yaml
+context_length: 10
+data_samples: 4978
+dataset: dataset:hurricane
+device: cuda:0
+diffusion_config: diffusion_s5
+dt: 1
+eval_every: 50
+freq: 6H
+gradient_clip_val: 0.5
+init_skip: true
+lag: 5
+lr: 0.001
+max_epochs: 250
+model: unconditional
+num_batches_per_epoch: 100
+num_lags: 10
+num_samples: 16
+observation_dim: 3
+out_dir: ./
+prediction_length: 5
+q: 1
+r: 1
+sampler: ddpm
+sampler_params:
+  guidance: quantile
+  scale: 2
+setup: forecasting
+use_lags: false
+use_mixer: false
+use_transformer: true

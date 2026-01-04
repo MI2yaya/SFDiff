@@ -1,0 +1,4 @@
+This is very preliminary error testing on minimal samples with single forecasts (no median)
+
+MSE ~100 with large STD
+CRPS ~6 with large std, values only really from (1,3) and (11,13)

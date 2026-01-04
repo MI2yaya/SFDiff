@@ -152,7 +152,7 @@ def time_splitter(data, past_length, future_length):
     for arr in data:
         tempDict = {}
         for key, series in arr.items():
-            if key=="state" or key=="observation":
+            if key=="state" or key=="observation" or key=="features":
                 tempDict[f"past_{key}"] = series[:past_length]
                 tempDict[f"future_{key}"] = series[past_length:past_length + future_length]
             else:
@@ -181,12 +181,22 @@ class StateObsDataset(Dataset):
 
     def __getitem__(self, idx):
         item = self.data[idx]
-        return {
-            "past_state": torch.tensor(item["past_state"], dtype=torch.float32),
-            "past_observation": torch.tensor(item["past_observation"], dtype=torch.float32),
-            "future_state": torch.tensor(item["future_state"], dtype=torch.float32),
-            "future_observation": torch.tensor(item["future_observation"], dtype=torch.float32),
-        }
+        if "past_features" in item:
+            return {
+                "past_state": torch.tensor(item["past_state"], dtype=torch.float32),
+                "past_observation": torch.tensor(item["past_observation"], dtype=torch.float32),
+                "past_features": torch.tensor(item["past_features"], dtype=torch.float32),
+                "future_state": torch.tensor(item["future_state"], dtype=torch.float32),
+                "future_observation": torch.tensor(item["future_observation"], dtype=torch.float32),
+                "future_features": torch.tensor(item["future_features"], dtype=torch.float32),
+            }
+        else:
+            return {
+                "past_state": torch.tensor(item["past_state"], dtype=torch.float32),
+                "past_observation": torch.tensor(item["past_observation"], dtype=torch.float32),
+                "future_state": torch.tensor(item["future_state"], dtype=torch.float32),
+                "future_observation": torch.tensor(item["future_observation"], dtype=torch.float32),
+            }
         
         
 import imageio
