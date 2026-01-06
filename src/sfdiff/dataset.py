@@ -182,7 +182,27 @@ def get_stored_dataset(dataset_name, config=None,length=5,plot=False):
 
         custom_data = np.array(custom_data)
 
+    elif config['observation_dim'] == 5:
+        custom_data = []
+        for obs in observations:
+            obs = np.array(obs)  # [L, 3]
+
+            lat = obs[:, 0]
+            lon = obs[:, 1]
+            
+            positions = encode_latlon(lat, lon)  # shape [L, 4]
+            windSpeed = obs[:, 2:]      # windspeed, shape [L,1]
+            state = np.concatenate([positions,windSpeed],axis=-1) #shape [L,5]
+
+            custom_data.append({
+                "state": state.astype(np.float32),
+                "observation": state.astype(np.float32),  # same as state for now
+            })
+
+        custom_data = np.array(custom_data)
+
     else:
+            
         custom_data = [
             {
                 "state":np.array(obs),#only needed for batching ig,

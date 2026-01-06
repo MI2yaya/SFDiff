@@ -1,0 +1,37 @@
+R_inv: !!python/object/apply:builtins.getattr
+- &id001 !!python/object:dataRetrieve.HurdatAT
+  dt: 1
+  filePath: data\hurdat2-1851-2024-040425.txt
+  length: 15
+  obs_dim: 5
+  plot: true
+  q: 1
+  r: 1
+- R_inv
+backbone_parameters:
+  hidden_dim: 128
+  num_residual_blocks: 10
+  time_emb_dim: 256
+context_length: 10
+cross_blocks: 12
+diffusion_scheduler: !!python/name:sfdiff.utils.linear_beta_schedule ''
+dropout_rate: 0.01
+h_fn: !!python/object/apply:builtins.getattr
+- *id001
+- h_fn
+init_skip: true
+lag: 5
+lr: 0.001
+modelType: s5
+normalize: true
+num_features: 0
+num_lags: 10
+observation_dim: 5
+observation_mean: 0.0
+observation_std: 1.0
+prediction_length: 5
+timesteps: 500
+use_features: false
+use_lags: false
+use_mixer: false
+use_transformer: false

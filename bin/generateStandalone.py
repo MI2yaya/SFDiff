@@ -224,6 +224,8 @@ def main(config_path):
     train_data = split_data['train']
     test_data = split_data['test']
     
+    use_features = config.get('use_features',False)
+    
 
     SFDiff = SFDiffForecaster(config, config['checkpoint_path'])
     SFDiff._load_model(generator.h_fn, generator.R_inv)
@@ -275,8 +277,7 @@ def main(config_path):
             series = test_data[i]
             past_observation = torch.as_tensor(series["past_observation"], dtype=torch.float32)
             
-            if "past_features" in series and series["past_features"] is not None \
-            and "future_features" in series and series["future_features"] is not None:
+            if use_features:
                 past_feat = torch.as_tensor(series["past_features"], dtype=torch.float32)
                 future_feat = torch.as_tensor(series["future_features"], dtype=torch.float32)
                 features = torch.cat([past_feat, future_feat], dim=0)
@@ -339,8 +340,7 @@ def main(config_path):
             past_observation = torch.as_tensor(series["past_observation"], dtype=torch.float32)
             future_state = torch.as_tensor(series["future_state"], dtype=torch.float32)
             
-            if "past_features" in series and series["past_features"] is not None \
-            and "future_features" in series and series["future_features"] is not None:
+            if use_features:
                 past_feat = torch.as_tensor(series["past_features"], dtype=torch.float32)
                 future_feat = torch.as_tensor(series["future_features"], dtype=torch.float32)
                 features = torch.cat([past_feat, future_feat], dim=0)

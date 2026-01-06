@@ -145,6 +145,8 @@ class HurdatAT:
                         obs_list.append([lat, lon, wind])
                     elif self.obs_dim == 4:
                         obs_list.append([lat,lon,wind,pressure]) #NaN hell, be warned
+                    elif self.obs_dim == 5:
+                        obs_list.append([lat,lon,wind]) #splitting lat, lon, into cos and sin components
                     else:
                         raise ValueError(f"Unsupported observation dimension: {self.obs_dim}")
 

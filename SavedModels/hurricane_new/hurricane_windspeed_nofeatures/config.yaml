@@ -1,5 +1,5 @@
 batch_size: 128
-checkpoint_path: lightning_logs\version_11\best_checkpoint.ckpt
+checkpoint_path: SavedModels\hurricane_new\hurricane_windspeed_nofeatures\best_checkpoint.ckpt
 config: configs\hurricane.yaml
 context_length: 10
 cross_blocks: 12
