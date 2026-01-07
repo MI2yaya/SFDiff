@@ -22,79 +22,59 @@ import torch.optim as optim
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-def mse(pred, true): #returns MSE per dimension
+def mse(pred, true): #returns MSE per dimension TBA
+    pred = torch.as_tensor(pred, dtype=torch.float32)
+    true = torch.as_tensor(true, dtype=torch.float32)
+    assert pred.shape == true.shape, "Shapes of pred and true must match"
+    assert pred.ndim == 2, "pred and true must be 2D arrays (time, dimensions)"
     pred = np.asarray(pred)
     true = np.asarray(true)
 
     mask = ~np.isnan(pred) & ~np.isnan(true)
-    if mask.sum() == 0:
-        return np.nan  # or raise, depending on preference
+    
+    sq_err = (true - pred) ** 2
+    sq_err[~mask] = np.nan
 
-    return np.mean((pred[mask] - true[mask]) ** 2,axis=0)
+    return np.mean(sq_err, axis=0)
 
 def crps(pred, true):
+    #pred (B,T,D), true (T,D)
     pred = torch.as_tensor(pred, dtype=torch.float32)
     true = torch.as_tensor(true, dtype=torch.float32)
-    
 
-    # CASE: both 1-D and same length -> treat as sequence batch
-    if pred.ndim == 1 and true.ndim == 1 and pred.shape[0] == true.shape[0]:
-        # turn into [B=T, N=1, F=1] and [B=T, 1, 1]
-        pred = pred.view(-1, 1, 1)
-        true = true.view(-1, 1, 1)
-    else:
-        # Generic promotion to [B, N, F] and [B, 1, F]
-        if pred.ndim == 1:
-            pred = pred.unsqueeze(0).unsqueeze(-1)   # [1, N, 1]
-        elif pred.ndim == 2:
-            pred = pred.unsqueeze(-1)               # [B, N, 1]
-        # true handling
-        if true.ndim == 0:
-            true = true.unsqueeze(0).unsqueeze(-1)  # scalar -> [1,1,1]
-        elif true.ndim == 1:
-            true = true.unsqueeze(1).unsqueeze(-1)  # [B,1,1]  (if B matches pred batch)
-        elif true.ndim == 2:
-            true = true.unsqueeze(1)               # [B,1,F]
+    if pred.ndim != 3:
+        raise ValueError("pred must have shape (B, T, D)")
+    if true.ndim != 2:
+        raise ValueError("true must have shape (T, D)")
+    if pred.shape[1:] != true.shape:
+        raise ValueError("pred shape (B,T,D) must match true shape (T,D)")
 
     B, T, D = pred.shape
-
-    # Mask NaNs in truth (shared across ensemble)
-    valid_mask = ~torch.isnan(true[0])    # [T, D]
-
-    crps_vals = []
+    crps = np.full((D,), float("nan"))
 
     for d in range(D):
-        mask = valid_mask[:, d]
-        if mask.sum() == 0:
+        mask = ~torch.isnan(true[:, d])          # (T,)
+        if not mask.any():
             continue
 
-        pred_d = pred[mask, d]          # [B, T_valid]
-        true_d = true[mask, d]          # [B, T_valid]
-
-        # All ensemble members share the same truth
-        true_d = true_d[0]                 # [T_valid]
+        # (B, T_valid)
+        pred_d = pred[:, mask, d]
+        true_d = true[mask, d]                    # (T_valid,)
 
         # E|X - y|
         term1 = torch.mean(
             torch.abs(pred_d - true_d.unsqueeze(0)),
-            dim=0
-        )                                  # [T_valid]
+            dim=0                                 # average over ensemble
+        )                                         # (T_valid,)
 
         # E|X - X'|
         diffs = torch.abs(
             pred_d.unsqueeze(0) - pred_d.unsqueeze(1)
-        )                                  # [B, B, T_valid]
-        term2 = 0.5 * torch.mean(diffs, dim=(0, 1))
+        )                                         # (B, B, T_valid)
+        term2 = 0.5 * torch.mean(diffs, dim=(0, 1))  # (T_valid,)
 
-        crps_d = term1 - term2
-        crps_d = torch.clamp(crps_d, min=0.0)
-
-        crps_vals.append(crps_d.mean())
-
-    if len(crps_vals) == 0:
-        return float("nan")
-
-    return torch.mean(torch.stack(crps_vals)).item()
+        crps[d] = torch.mean(term1 - term2).numpy()
+    return crps
 
 class SFDiffForecaster:
     def __init__(self, config, checkpoint_path):
@@ -248,7 +228,8 @@ def main(config_path):
     skipSFDiffSNR=True
     skipSFDiffCheapCond=True
     skipSFDiffExpensiveCond=False
-    plot = True
+    plot = False
+    skipNAN=True
     
     if skipSFDiffSNR==False:
             trials = 10
@@ -346,15 +327,19 @@ def main(config_path):
         logger.info(f"SFDiff Cheap Guidance + Condition: Future MSE={sfdiff_mse_avg:.4f} ± {sfdiff_mse_std:.4f}, CRPS={sfdiff_crps_avg:.4f} ± {sfdiff_crps_std:.4f}")
         
     if skipSFDiffExpensiveCond == False:
-        trials=10
-        batch_size=1
+        print("Starting SFDiff Expensive Conditional Sampling")
+        trials=20
+        batch_size=5
         sfdiff_MSEs=[]
         sfdiff_CRPSs=[]
         for i in range(trials):
             series = test_data[i]
             past_observation = torch.as_tensor(series["past_observation"], dtype=torch.float32)
             future_state = torch.as_tensor(series["future_state"], dtype=torch.float32)
-            
+            if skipNAN and torch.isnan(future_state).any():
+                print("Skipping trial with NaN in future state")
+                i=i-1
+                continue
             if use_features:
                 past_feat = torch.as_tensor(series["past_features"], dtype=torch.float32)
                 future_feat = torch.as_tensor(series["future_features"], dtype=torch.float32)
@@ -381,14 +366,13 @@ def main(config_path):
                 plot=False,
                 guidance=True,
             )
-            generated_future = np.median(generated[:, -prediction_length:, :].cpu().numpy(),axis=0)
-            if generated_future.shape[1]>=4:
-                sin_lat = generated_future[..., 0]
-                cos_lat = generated_future[..., 1]
-                sin_lon = generated_future[..., 2]
-                cos_lon = generated_future[..., 3]
-                
-
+            generated_future_median = np.median(generated[:, -prediction_length:, :].cpu().numpy(),axis=0)
+            generated_future_batch = generated[:, -prediction_length:, :].cpu().numpy()
+            if generated.shape[2]>=4: #convert to latlon
+                sin_lat = generated_future_median[..., 0]
+                cos_lat = generated_future_median[..., 1]
+                sin_lon = generated_future_median[..., 2]
+                cos_lon = generated_future_median[..., 3]
                 lat, lon = sincos_to_latlon(
                     torch.tensor(sin_lat),
                     torch.tensor(cos_lat),
@@ -397,8 +381,25 @@ def main(config_path):
                 )
                 lat = lat.numpy()
                 lon = lon.numpy()
-                everythingElse = generated_future[..., 4:]
-                generated_future = np.concatenate([lat[..., np.newaxis], lon[..., np.newaxis], everythingElse], axis=-1)
+                everythingElse = generated_future_median[..., 4:]
+                generated_future_median = np.concatenate([lat[..., np.newaxis], lon[..., np.newaxis], everythingElse], axis=-1)
+
+                # For full batch
+                sin_lat = generated_future_batch[..., 0]
+                cos_lat = generated_future_batch[..., 1]
+                sin_lon = generated_future_batch[..., 2]
+                cos_lon = generated_future_batch[..., 3]
+                lat, lon = sincos_to_latlon(
+                    torch.tensor(sin_lat),
+                    torch.tensor(cos_lat),
+                    torch.tensor(sin_lon),
+                    torch.tensor(cos_lon)
+                )
+                lat = lat.numpy()
+                lon = lon.numpy()
+                everythingElse = generated_future_batch[..., 4:]
+                generated_future_batch = np.concatenate([lat[..., np.newaxis], lon[..., np.newaxis], everythingElse], axis=-1)
+
 
                 true_sin_lat, true_cos_lat, true_sin_lon, true_cos_lon, true_everythingElse = future_state[:, 0], future_state[:, 1], future_state[:, 2], future_state[:, 3], future_state[:, 4:]
                 true_lat, true_lon = sincos_to_latlon(
@@ -410,32 +411,34 @@ def main(config_path):
                 future_state = np.concatenate([true_lat.numpy()[:, np.newaxis], true_lon.numpy()[:, np.newaxis], true_everythingElse.numpy()], axis=-1)
                 
             # Compute MSE and CRPS
-            print(generated_future, future_state)
-            sfdiff_mse = mse(generated_future, future_state) 
-            print(sfdiff_mse)
-            sfdiff_crps = crps(generated_future, future_state)
-            print(sfdiff_crps)
+            #print(generated_future_median, future_state)
+            sfdiff_mse = mse(generated_future_median, future_state) 
+            #print(f"MSE:{sfdiff_mse}")
+            sfdiff_crps = crps(generated_future_batch, future_state)
+            #print(f"CRPS:{sfdiff_crps}")
             sfdiff_MSEs.append(sfdiff_mse)
             sfdiff_CRPSs.append(sfdiff_crps)
-            if plot: #and i==0:
+            if plot and i==0:
                 plt.figure(figsize=(10,5))
                 total_length = past_observation.shape[1] + prediction_length
                 time_axis = np.arange(total_length) * config['dt']
                 plt.plot(time_axis[:past_observation.shape[1]], past_observation.squeeze().cpu().numpy(), label='Past Observations', color='blue')
                 plt.plot(time_axis[past_observation.shape[1]:], future_state, label='True Future State', color='green')
-                plt.plot(time_axis[past_observation.shape[1]:], generated_future, label='SFDiff Prediction', color='red')
+                plt.plot(time_axis[past_observation.shape[1]:], generated_future_median, label='SFDiff Prediction', color='red')
                 plt.xlabel('Time')
                 plt.ylabel('Value')
                 plt.title('SFDiff Expensive Prediction vs True Future State')
                 plt.legend()
                 plt.show()
             
-        sfdiff_mse_avg = np.mean(sfdiff_MSEs)
-        sfdiff_mse_std = np.std(sfdiff_MSEs)
-        sfdiff_crps_avg = np.mean(sfdiff_CRPSs)
-        sfdiff_crps_std = np.std(sfdiff_CRPSs)
-        logger.info(f"SFDiff Expensive Guidance + Condition: Future MSE={sfdiff_mse_avg:.4f} ± {sfdiff_mse_std:.4f}, CRPS={sfdiff_crps_avg:.4f} ± {sfdiff_crps_std:.4f}")
-    
+        sfdiff_mse_avg = np.nanmean(sfdiff_MSEs)
+        sfdiff_mse_median = np.nanmedian(sfdiff_MSEs)
+        sfdiff_mse_std = np.nanstd(sfdiff_MSEs)
+        sfdiff_crps_avg = np.nanmean(sfdiff_CRPSs)
+        sfdiff_crps_median = np.nanmedian(sfdiff_CRPSs)
+        sfdiff_crps_std = np.nanstd(sfdiff_CRPSs)
+        logger.info(f"SFDiff Expensive Guidance + Condition: \nAverage Future MSE={sfdiff_mse_avg:.4f} ± {sfdiff_mse_std:.4f}, Average CRPS={sfdiff_crps_avg:.4f} ± {sfdiff_crps_std:.4f}\nMedian Future MSE={sfdiff_mse_median:.4f} ± {sfdiff_mse_std:.4f}, Median CRPS={sfdiff_crps_median:.4f} ± {sfdiff_crps_std:.4f}")
+
     logger.info(f'Done SFDiff')
     
 if __name__ == "__main__":
