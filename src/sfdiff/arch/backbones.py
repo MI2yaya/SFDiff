@@ -29,11 +29,11 @@ class SequenceLayer(nn.Module):
     """
     Wraps either S4Layer or S5Layer with identical API.
     """
-    def __init__(self, d_model, dropout, block_type="s4"):
+    def __init__(self, d_model, dropout, modelType="s4"):
         super().__init__()
-        self.block_type = block_type.lower()
+        self.modelType = modelType.lower()
 
-        if self.block_type == "s4":
+        if self.modelType == "s4":
             self.layer = S4(
                 d_model=d_model,
                 d_state=128,
@@ -42,17 +42,17 @@ class SequenceLayer(nn.Module):
                 transposed=True,
                 postact=None,
             )
-        elif self.block_type == "s5":
+        elif self.modelType == "s5":
             self.layer = S5(
                 d_model=d_model,
-                d_state=64,
+                d_state=128,
                 bidirectional=True,
                 dropout=dropout,
                 transposed=True,
                 postact=None,
             )
         else:
-            raise ValueError(f"Unknown block type {block_type}")
+            raise ValueError(f"Unknown block type {modelType}")
 
         self.norm = nn.LayerNorm(d_model)
         self.dropout = (
@@ -81,10 +81,10 @@ class SequenceLayer(nn.Module):
 
 
 class SequenceBlock(nn.Module):
-    def __init__(self, d_model, dropout=0.0, expand=2,block_type='s4',num_features=0):
+    def __init__(self, d_model, dropout=0.0, expand=2,modelType='s4',num_features=0):
         super().__init__()
         # S4Layer already handles dropout internally
-        self.core = SequenceLayer(d_model, dropout, block_type)
+        self.core = SequenceLayer(d_model, dropout, modelType)
         self.time_linear = nn.Linear(d_model, d_model)
         self.tanh = nn.Tanh()
         self.sigm = nn.Sigmoid()
@@ -144,7 +144,7 @@ class SequenceBackbone(nn.Module):
         num_residual_blocks,
         dropout=0.0,
         init_skip=True,
-        block_type="s4",
+        modelType="s4",
         use_transformer=False,
         use_mixer=False,
         cross_blocks=-1,
@@ -152,7 +152,7 @@ class SequenceBackbone(nn.Module):
         num_features=-1,
     ):
         super().__init__()
-        self.block_type = block_type.lower()
+        self.modelType = modelType.lower()
         self.input_init = nn.Sequential(
             nn.Linear(observation_dim, hidden_dim),
             nn.ReLU(),
@@ -172,7 +172,7 @@ class SequenceBackbone(nn.Module):
             SequenceBlock(
                 hidden_dim,
                 dropout=dropout,
-                block_type=block_type,
+                modelType=modelType,
                 num_features=num_features if use_features else 0,
             )
             for _ in range(num_residual_blocks)
@@ -214,7 +214,9 @@ class SequenceBackbone(nn.Module):
         if self.use_features > 0:
             print(f"Using additional features with dim {num_features}")
         else:
-            print("Not using additional features")
+            print("Not using additional features")  
+        
+        print(f"Backbone type: {self.modelType}", f"with {num_residual_blocks} residual blocks", f"for {observation_dim} observation dim")
 
     def forward(self, input, t, features=None):
         B, L, D = input.shape  # B,L,D*L

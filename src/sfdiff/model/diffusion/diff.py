@@ -80,7 +80,8 @@ class SFDiff(SFDiffBase):
                 use_mixer=use_mixer,
                 cross_blocks=cross_blocks if cross_blocks > 0 else observation_dim,
                 use_features=use_features,
-                num_features=num_features
+                num_features=num_features,
+                modelType=modelType,
             )
             
         elif modelType=='unet':

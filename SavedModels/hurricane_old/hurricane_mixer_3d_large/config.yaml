@@ -6,7 +6,7 @@ cross_blocks: 6
 data_samples: 4978
 dataset: dataset:hurricane
 device: cuda:0
-diffusion_config: diffusion_s5_large
+diffusion_config: diffusion_s4_large
 dt: 1
 eval_every: 50
 freq: 6H

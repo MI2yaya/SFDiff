@@ -144,7 +144,8 @@ class HurdatAT:
                     elif self.obs_dim == 3:
                         obs_list.append([lat, lon, wind])
                     elif self.obs_dim == 4:
-                        obs_list.append([lat,lon,wind,pressure]) #NaN hell, be warned
+                        #obs_list.append([lat,lon,wind,pressure]) #NaN hell, be warned
+                        obs_list.append([lat,lon]) #working with 4d as long lat only
                     elif self.obs_dim == 5:
                         obs_list.append([lat,lon,wind]) #splitting lat, lon, into cos and sin components
                     else:

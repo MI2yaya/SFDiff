@@ -182,7 +182,25 @@ def get_stored_dataset(dataset_name, config=None,length=5,plot=False):
 
         custom_data = np.array(custom_data)
 
-    elif config['observation_dim'] == 5:
+    elif config['observation_dim'] == 4: #long lat only
+        custom_data = []
+        for obs in observations:
+            obs = np.array(obs)  # [L, 3]
+
+            lat = obs[:, 0]
+            lon = obs[:, 1]
+            
+            positions = encode_latlon(lat, lon)  # shape [L, 4]
+            state = positions
+
+            custom_data.append({
+                "state": state.astype(np.float32),
+                "observation": state.astype(np.float32),  # same as state for now
+            })
+
+        custom_data = np.array(custom_data)
+
+    elif config['observation_dim'] == 5: #long lat + windspeed
         custom_data = []
         for obs in observations:
             obs = np.array(obs)  # [L, 3]

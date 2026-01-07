@@ -177,7 +177,7 @@ class StateForecastPlotter:
         cos_lat = forecast[..., 1]
         sin_lon = forecast[..., 2]
         cos_lon = forecast[..., 3]
-        wind    = forecast[..., 4]
+        
 
         lat, lon = self.sincos_to_latlon(
             torch.tensor(sin_lat),
@@ -231,22 +231,31 @@ class StateForecastPlotter:
         # Median track
         lat_med = np.nanmedian(lat, axis=0)
         lon_med = np.nanmedian(lon, axis=0)
-        wind_med = np.nanmedian(wind, axis=0)
-        
+        if forecast.shape[-1] >=5:
+            wind = forecast[...,4]
+            wind_med = np.nanmedian(wind, axis=0)
 
-
-        # Create line segments for median track colored by wind
-        points = np.array([lon_med, lat_med]).T.reshape(-1, 1, 2)
-        segments = np.concatenate([points[:-1], points[1:]], axis=1)
-        lc = LineCollection(
-            segments,
-            cmap="viridis",
-            norm=plt.Normalize(wind_med.min(), wind_med.max()),
-            linewidth=2.5,
-            transform=ccrs.PlateCarree(),
-        )
-        lc.set_array(wind_med[:-1])
-        ax.add_collection(lc)
+            # Create line segments for median track colored by wind
+            points = np.array([lon_med, lat_med]).T.reshape(-1, 1, 2)
+            segments = np.concatenate([points[:-1], points[1:]], axis=1)
+            lc = LineCollection(
+                segments,
+                cmap="viridis",
+                norm=plt.Normalize(wind_med.min(), wind_med.max()),
+                linewidth=2.5,
+                transform=ccrs.PlateCarree(),
+            )
+            lc.set_array(wind_med[:-1])
+            ax.add_collection(lc)
+        else:
+            ax.plot(
+                lon_med,
+                lat_med,
+                color='black',
+                linewidth=2.5,
+                label='Median Forecast',
+                transform=ccrs.PlateCarree()
+            )
 
         ax.plot(
             lon_med[context_end_idx],

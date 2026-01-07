@@ -22,7 +22,7 @@ import torch.optim as optim
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-def mse(pred, true):
+def mse(pred, true): #returns MSE per dimension
     pred = np.asarray(pred)
     true = np.asarray(true)
 
@@ -30,7 +30,7 @@ def mse(pred, true):
     if mask.sum() == 0:
         return np.nan  # or raise, depending on preference
 
-    return np.mean((pred[mask] - true[mask]) ** 2)
+    return np.mean((pred[mask] - true[mask]) ** 2,axis=0)
 
 def crps(pred, true):
     pred = torch.as_tensor(pred, dtype=torch.float32)
@@ -68,8 +68,8 @@ def crps(pred, true):
         if mask.sum() == 0:
             continue
 
-        pred_d = pred[:, mask, d]          # [B, T_valid]
-        true_d = true[:, mask, d]          # [B, T_valid]
+        pred_d = pred[mask, d]          # [B, T_valid]
+        true_d = true[mask, d]          # [B, T_valid]
 
         # All ensemble members share the same truth
         true_d = true_d[0]                 # [T_valid]
@@ -184,6 +184,21 @@ class SFDiffForecaster:
 
         return t_list, snr_list, intermediate_waves
     
+    
+def sincos_to_latlon(sin_lat, cos_lat, sin_lon, cos_lon):
+    eps = 1e-6
+
+    sin_lat = torch.as_tensor(sin_lat)
+    cos_lat = torch.as_tensor(cos_lat)
+    sin_lon = torch.as_tensor(sin_lon)
+    cos_lon = torch.as_tensor(cos_lon)
+
+    # Use atan2 directly; no manual renormalization needed
+    lat = torch.atan2(sin_lat, cos_lat) * 180.0 / torch.pi
+    lon = torch.atan2(sin_lon, cos_lon) * 180.0 / torch.pi
+
+    return lat, lon  
+  
     
 def main(config_path):
     with open(config_path, "r") as f:
@@ -367,11 +382,38 @@ def main(config_path):
                 guidance=True,
             )
             generated_future = np.median(generated[:, -prediction_length:, :].cpu().numpy(),axis=0)
+            if generated_future.shape[1]>=4:
+                sin_lat = generated_future[..., 0]
+                cos_lat = generated_future[..., 1]
+                sin_lon = generated_future[..., 2]
+                cos_lon = generated_future[..., 3]
+                
+
+                lat, lon = sincos_to_latlon(
+                    torch.tensor(sin_lat),
+                    torch.tensor(cos_lat),
+                    torch.tensor(sin_lon),
+                    torch.tensor(cos_lon)
+                )
+                lat = lat.numpy()
+                lon = lon.numpy()
+                everythingElse = generated_future[..., 4:]
+                generated_future = np.concatenate([lat[..., np.newaxis], lon[..., np.newaxis], everythingElse], axis=-1)
+
+                true_sin_lat, true_cos_lat, true_sin_lon, true_cos_lon, true_everythingElse = future_state[:, 0], future_state[:, 1], future_state[:, 2], future_state[:, 3], future_state[:, 4:]
+                true_lat, true_lon = sincos_to_latlon(
+                    torch.tensor(true_sin_lat),
+                    torch.tensor(true_cos_lat),
+                    torch.tensor(true_sin_lon),
+                    torch.tensor(true_cos_lon)
+                )
+                future_state = np.concatenate([true_lat.numpy()[:, np.newaxis], true_lon.numpy()[:, np.newaxis], true_everythingElse.numpy()], axis=-1)
+                
             # Compute MSE and CRPS
-            print(generated_future, future_state.squeeze(0).numpy())
-            sfdiff_mse = mse(generated_future, future_state.squeeze(0).numpy())
+            print(generated_future, future_state)
+            sfdiff_mse = mse(generated_future, future_state) 
             print(sfdiff_mse)
-            sfdiff_crps = crps(generated_future, future_state.squeeze(0).numpy())
+            sfdiff_crps = crps(generated_future, future_state)
             print(sfdiff_crps)
             sfdiff_MSEs.append(sfdiff_mse)
             sfdiff_CRPSs.append(sfdiff_crps)
@@ -380,7 +422,7 @@ def main(config_path):
                 total_length = past_observation.shape[1] + prediction_length
                 time_axis = np.arange(total_length) * config['dt']
                 plt.plot(time_axis[:past_observation.shape[1]], past_observation.squeeze().cpu().numpy(), label='Past Observations', color='blue')
-                plt.plot(time_axis[past_observation.shape[1]:], future_state.squeeze().cpu().numpy(), label='True Future State', color='green')
+                plt.plot(time_axis[past_observation.shape[1]:], future_state, label='True Future State', color='green')
                 plt.plot(time_axis[past_observation.shape[1]:], generated_future, label='SFDiff Prediction', color='red')
                 plt.xlabel('Time')
                 plt.ylabel('Value')

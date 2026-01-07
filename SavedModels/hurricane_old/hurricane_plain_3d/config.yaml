@@ -5,7 +5,7 @@ context_length: 10
 data_samples: 4978
 dataset: dataset:hurricane
 device: cuda:0
-diffusion_config: diffusion_s5
+diffusion_config: diffusion_s4
 dt: 1
 eval_every: 50
 freq: 6H

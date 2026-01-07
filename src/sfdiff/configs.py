@@ -14,6 +14,11 @@ backbone_s5_large = {
     "time_emb_dim": 256,
     "num_residual_blocks": 10,
 }
+backbone_s4_large= {
+    "hidden_dim": 128,
+    "time_emb_dim": 256,
+    "num_residual_blocks": 10,
+}
 backbone_s4 = {
     "hidden_dim": 64,
     "time_emb_dim": 256,
@@ -29,6 +34,11 @@ backbone_unet = {
 diffusion_s4 = {
     "backbone_parameters": backbone_s4,
     "timesteps": 200,
+    "diffusion_scheduler": linear_beta_schedule,
+}
+diffusion_s4_large = {
+    "backbone_parameters": backbone_s4_large,
+    "timesteps": 500,
     "diffusion_scheduler": linear_beta_schedule,
 }
 diffusion_s5 = {
