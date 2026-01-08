@@ -1,0 +1,5 @@
+trials=20
+batch_size=5
+INFO - SFDiff Expensive Guidance + Condition: 
+Average Future MSE=46.2968 ± 76.7838, Average CRPS=3.3888 ± 2.4989
+Median Future MSE=14.6363 ± 76.7838, Median CRPS=2.9407 ± 2.4989

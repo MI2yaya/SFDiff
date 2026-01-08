@@ -1,0 +1,49 @@
+batch_size: 128
+checkpoint_path: hurricane_visualizer\models\S4_3D\best_checkpoint.ckpt
+config: configs\hurricane.yaml
+context_length: 10
+cross_blocks: 12
+data_samples: 4978
+dataset: dataset:hurricaneAtlantic
+device: cuda:0
+diffusion_config: diffusion_s4_large
+dt: 1
+eval_every: 50
+freq: 6H
+gradient_clip_val: 0.5
+init_skip: true
+lag: 5
+lr: 0.001
+max_epochs: 250
+model: unconditional
+normalize: true
+num_batches_per_epoch: 100
+num_features: 0
+num_lags: 10
+num_samples: 16
+observation_dim: 5
+observation_mean:
+- 0.45404237508773804
+- 0.872508704662323
+- -0.8525031805038452
+- 0.3959771990776062
+- 53.089210510253906
+observation_std:
+- 0.15361246466636658
+- 0.09473978728055954
+- 0.17947880923748016
+- 0.29025647044181824
+- 25.207643508911133
+out_dir: ./
+prediction_length: 5
+q: 1
+r: 1
+sampler: ddpm
+sampler_params:
+  guidance: quantile
+  scale: 2
+setup: forecasting
+use_features: false
+use_lags: false
+use_mixer: false
+use_transformer: false

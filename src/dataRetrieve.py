@@ -3,6 +3,8 @@ import os
 import numpy as np
 import re
 
+
+
 class HurdatAT:
     def __init__(self,length,plot,observation_dim=3):
         self.length=length
@@ -177,11 +179,7 @@ class HurdatAT:
             if arr.shape[0] < 2:
                 continue  
 
-
-            noise = np.random.normal(0, self.r, size=arr.shape)
-            noisy = arr + noise
-
-            windows = self.sliding_windows(noisy, self.length, 2)
+            windows = self.sliding_windows(arr, self.length, 2)
 
             for window in windows:
                 if self.plot and not plotted:
@@ -392,10 +390,7 @@ class HurdatPA:
                 continue  
 
 
-            noise = np.random.normal(0, self.r, size=arr.shape)
-            noisy = arr + noise
-
-            windows = self.sliding_windows(noisy, self.length, 2)
+            windows = self.sliding_windows(arr, self.length, 2)
 
             for window in windows:
                 if self.plot and not plotted:

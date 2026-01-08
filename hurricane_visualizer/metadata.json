@@ -1,0 +1,4 @@
+{
+  "name": "SFDiff Hurricane Viz",
+  "description": "Advanced visualization dashboard for SFDiff hurricane forecasting model, comparing diffusion predictions against ground truth and baselines."
+}

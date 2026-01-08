@@ -43,13 +43,20 @@ class SequenceLayer(nn.Module):
                 postact=None,
             )
         elif self.modelType == "s5":
+            self.state_width = d_model  # S5 internal state
             self.layer = S5(
-                d_model=d_model,
-                d_state=128,
-                bidirectional=True,
-                dropout=dropout,
-                transposed=True,
-                postact=None,
+                width=d_model,
+                state_width=self.state_width,
+                bidir=True,
+                block_count=1,
+                dt_min=0.001,
+                dt_max=0.1,
+            )
+            self.seq_proj = nn.Conv1d(
+                in_channels=d_model, out_channels=self.state_width, kernel_size=1
+            )
+            self.seq_deproj = nn.Conv1d(
+                in_channels=self.state_width, out_channels=d_model, kernel_size=1
             )
         else:
             raise ValueError(f"Unknown block type {modelType}")
@@ -64,7 +71,16 @@ class SequenceLayer(nn.Module):
         x: (B, d_model, L)
         """
         z = self.norm(x.transpose(-1, -2)).transpose(-1, -2)
-        z, _ = self.layer(z)
+        
+        if self.modelType == "s5":
+            # project L → state_width
+            z_proj = self.seq_proj(z)  # (B, state_width, state_width)
+            z_proj, _ = self.layer(z_proj)
+            # de-project back to original sequence length
+            z = self.seq_deproj(z_proj)  # (B, d_model, L)
+        else:
+            z, _ = self.layer(z)
+            
         z = self.dropout(z)
         return x + z, None  # residual
 
